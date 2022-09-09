@@ -5,6 +5,8 @@ import shutil
 import re
 from .buildtree import check_buildtree, BuildTree
 from .subp import CommandExecutor, sys_memory_size
+from .util import *
+import time
 
 def replace_shape_batch(cmd, batch_size):
     match = re.search('-shapes *(\[.*\])', cmd)
@@ -79,31 +81,6 @@ def build_nntc(tree, path, config):
     if 'shape_key' in config:
         name = f'{name}-{config["shape_key"]}'
 
-    if not option_time_only and 'fp32_compile_options' in config:
-        fp32_pool = CommandExecutor(workdir, env)
-        cmd = tree.expand_variables(config, config["fp32_compile_options"])
-        logging.info(f'Building FP32 bmodel {name}...')
-        if 'fp32_batch_sizes' in config:
-            for batch_size in config['fp32_batch_sizes']:
-                batch_cmd = replace_shape_batch(cmd, batch_size)
-                fp32_pool.put(
-                    f'{batch_size}b.fp32.compile',
-                    f'{batch_cmd} --outdir {batch_size}b.fp32.compilation')
-        else:
-            outname = 'fp32.compilation'
-            match = re.search('-shapes *(\[.*\])', cmd)
-            if match is not None:
-                shapes = eval(match.group(1))
-                if type(shapes[0]) != list:
-                    shapes = [shapes]
-                batch = shapes[0][0]
-                outname = f'{batch}b.' + outname
-            fp32_pool.put(
-                f'fp32.compile',
-                f'{cmd} --outdir {outname}')
-        fp32_pool.wait()
-        logging.info(f'FP32 bmodel {name} done.')
-
     int8_pool = CommandExecutor(
         workdir, env,
         memory_hint=config.get('memory_hint'))
@@ -123,18 +100,56 @@ def build_nntc(tree, path, config):
 
         cmd = tree.expand_variables(config, config[cali_key])
         logging.info(f'Calibrating {name}...')
+        start = time.monotonic()
         int8_pool.run(cali_key, cmd)
+        elaps = format_seconds(time.monotonic() - start)
+        logging.info(f'{name} calibration finished in {elaps}.')
+
+    if 'fp32_compile_options' in config:
+        fp32_pool = CommandExecutor(workdir, env)
+        start = time.monotonic()
+        logging.info(f'Building FP32 bmodel {name}...')
+        batch_sizes = config.get('fp32_batch_sizes', [1]) \
+            if not option_time_only else [1]
+        fp32_loops = config.get('fp32_loops') or \
+            tree.global_config.get('fp32_loops') or [dict()]
+        for loop in fp32_loops:
+            loop_config = dict_override(config, loop)
+            cmd = tree.expand_variables(loop_config, loop_config["fp32_compile_options"])
+            for batch_size in batch_sizes:
+                if 'fp32_batch_sizes' in config:
+                    batch_cmd = replace_shape_batch(cmd, batch_size)
+                else:
+                    batch_cmd = cmd
+                outdir = loop_config.get(
+                    'fp32_outdir_template',
+                    '{}b.fp32.compilation').format(batch_size)
+                fp32_pool.put(
+                    outdir,
+                    f'{batch_cmd} --outdir {outdir}')
+        fp32_pool.wait()
+        elaps = format_seconds(time.monotonic() - start)
+        logging.info(f'FP32 bmodel {name} done in {elaps}.')
 
     if 'bmnetu_options' in config:
         # Build int8 bmodel
-        cmd = f'python3 -m bmnetu {config["bmnetu_options"]}'
-        cmd = tree.expand_variables(config, cmd)
+        start = time.monotonic()
         logging.info(f'Compiling {name}...')
-        for b in config['bmnetu_batch_sizes']:
-            int8_pool.put(
-                f'compile.{b}',
-                f'{cmd} --max_n {b} --outdir {b}b.compilation')
+        int8_loops = config.get('int8_loops') or \
+            tree.global_config.get('int8_loops') or [dict()]
+        for loop in int8_loops:
+            loop_config = dict_override(config, loop)
+            cmd = f'python3 -m bmnetu {loop_config["bmnetu_options"]}'
+            cmd = tree.expand_variables(loop_config, cmd)
+            for b in loop_config['bmnetu_batch_sizes']:
+                outdir = loop_config.get(
+                    'int8_outdir_template', '{}b.compilation').format(b)
+                int8_pool.put(
+                    outdir,
+                    f'{cmd} --max_n {b} --outdir {outdir}')
         int8_pool.wait()
+        elaps = format_seconds(time.monotonic() - start)
+        logging.info(f'INT8 bmodel {name} done in {elaps}.')
 
 def main():
     logging.basicConfig(
@@ -167,6 +182,7 @@ def main():
     build_fn = build_mlir if args.mlir else build_nntc
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    ret = 0
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         futures = []
 
@@ -177,9 +193,13 @@ def main():
         for f in as_completed(futures):
             err = f.exception()
             if err:
-                logging.error(f'Quit because of exception, {err}')
                 if args.exit_on_error:
+                    logging.error(f'Quit because of exception, {err}')
                     os._exit(-1)
+                else:
+                    logging.warning(f'Task failed, {err}')
+                    ret = -1
+    sys.exit(ret)
 
 if __name__ == '__main__':
     main()
