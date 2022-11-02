@@ -6,7 +6,14 @@ jobs:
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
-      - name: pull test code
-        run: cd ..; pwd; git clone ssh://gerrit-ai.sophgo.vip/pytest || (cd pytest && git pull)
-      - name: test
-        run: cd ../pytest/test_tpu_perf; pwd; PYTEST_TPU_PERF_CFG=config_ci.yaml python3 -m pytest --show-capture=log
+      - name: Check out model-zoo
+        uses: actions/checkout@v3
+        with:
+          repository: sophgo-model-zoo
+          path: model-zoo-test
+      # - name: pull test code
+      #   run: cd ..; pwd; git clone ssh://gerrit-ai.sophgo.vip/pytest || (cd pytest && git pull)
+      # - name: test_nntc
+      #   run: cd ../pytest/test_tpu_perf; pwd; PYTEST_TPU_PERF_CFG=config_ci.yaml python3 -m pytest --show-capture=log
+      # - name: test_mlir
+      #   run 

@@ -1,0 +1,25 @@
+test_nntc:
+    test_pass_indicator: &test_pass_indicator
+      # 性能测试用时不能慢于历史用时 0.2ms 以上
+      efficiency: 0.2
+      # 精度测试 INT8 和 FP32 测试结果不能相差 5 个以上百分点
+      precision: 5
+    test_model_dirs: &test_model_dir
+      - vision/detection/yolov5
+test_mlir:
+    skip: no
+    http_url: *http_url
+    ftp_url:
+      local_dir: *local_dir
+      release_time: *release_time
+      libsophon: *libsophon
+      sdk:
+        remote_dir: /sophon-sdk/tpu-mlir/daily_build
+        package_name: Master_<date>_\d{6}
+        latest_release_dir: /sophon-sdk/tpu-mlir/daily_build/latest_release
+      imagenet_val: *imagenet_val
+      coco_anno: *coco_anno
+      coco_val: *coco_val
+    auto_update: *auto_update
+    test_pass_indicator: *test_pass_indicator
+    test_model_dirs: *test_model_dir
