@@ -9,7 +9,7 @@ jobs:
       - name: Check out model-zoo
         uses: actions/checkout@v3
         with:
-          repository: sophgo-model-zoo
+          repository: sophgo/model-zoo
           path: model-zoo-test
       # - name: pull test code
       #   run: cd ..; pwd; git clone ssh://gerrit-ai.sophgo.vip/pytest || (cd pytest && git pull)
